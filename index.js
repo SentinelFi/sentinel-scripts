@@ -7,18 +7,22 @@ import {
   Keypair,
   xdr,
   BASE_FEE,
-  TimeoutInfinite,
-  nativeToScVal,
-  scValToNative,
 } from "@stellar/stellar-sdk";
 
 import { Server } from "@stellar/stellar-sdk/rpc";
 
 const contractAddress =
-  "CCXPET3VSGNFRZMGDAQ2WLF5G4CRQN22J7XAQGY5VACJYK4IUGCR2ZOL";
+  "CAK6MJ7GZJUNXESY7WGLZRA2P4JBPARRI5LAOUEJG4KATT4XSNUS5OIZ";
 const networkPassphrase = Networks.TESTNET;
 const serverUrl = "https://soroban-testnet.stellar.org:443";
 const userSecretKey = "YOUR_PRIVATE_KEY";
+
+const booleanToXdr = (value) => xdr.ScVal.scvBool(value);
+
+const optionalU64ToXdr = (value) =>
+  value !== null && value !== undefined
+    ? xdr.ScVal.scvU64(value)
+    : xdr.ScVal.scvVoid();
 
 async function callBumpFunction(eventOccurred, eventTime) {
   try {
@@ -26,14 +30,8 @@ async function callBumpFunction(eventOccurred, eventTime) {
     const userKeypair = Keypair.fromSecret(userSecretKey);
     const contract = new Contract(contractAddress);
 
-    const eventOccurredParam = nativeToScVal(eventOccurred, { type: "bool" });
-
-    let eventTimeParam;
-    if (eventTime === null || eventTime === undefined) {
-      eventTimeParam = xdr.ScVal.scvVoid(); // None/null case
-    } else {
-      eventTimeParam = nativeToScVal(BigInt(eventTime), { type: "u64" });
-    }
+    const eventOccurredParam = booleanToXdr(eventOccurred);
+    const eventTimeParam = optionalU64ToXdr(eventTime);
 
     const account = await server.getAccount(userKeypair.publicKey());
 
@@ -42,28 +40,38 @@ async function callBumpFunction(eventOccurred, eventTime) {
       networkPassphrase,
     })
       .addOperation(contract.call("bump", eventOccurredParam, eventTimeParam))
-      .setTimeout(TimeoutInfinite)
+      .setTimeout(30)
       .build();
 
-    transaction.sign(userKeypair);
-    console.log("Submitting transaction to call bump function...");
+    const prepared = await server.prepareTransaction(transaction);
 
-    const sendResponse = await server.sendTransaction(transaction);
-    console.log("Transaction submission response:", sendResponse);
+    prepared.sign(userKeypair);
+
+    console.log(
+      "Submitting transaction to call bump function...",
+      userKeypair.publicKey()
+    );
+
+    const sendResponse = await server.sendTransaction(prepared);
+    console.log("👉 Transaction submission response:", sendResponse);
 
     if (sendResponse.status === "PENDING") {
       // Poll for transaction status
       let txResponse;
       do {
+        console.log("Polling...");
         await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait 2 seconds between polling
         txResponse = await server.getTransaction(sendResponse.hash);
-        console.log("Transaction status:", txResponse.status);
       } while (txResponse.status === "NOT_FOUND");
 
       if (txResponse.status === "SUCCESS") {
-        const result = scValToNative(txResponse.resultXdr.result().retval());
-        console.log("Contract function result:", result);
-        return result;
+        const returnValue = txResponse.resultMetaXdr
+          .v3()
+          .sorobanMeta()
+          ?.returnValue();
+        const val = returnValue.value();
+        console.log(val?.toString(), typeof val);
+        return val;
       } else {
         console.error("Transaction failed:", txResponse);
         throw new Error(`Transaction failed with status: ${txResponse.status}`);
@@ -82,8 +90,8 @@ async function callBumpFunction(eventOccurred, eventTime) {
 // Example usage
 async function main() {
   try {
-    const event_occurred = false;
-    const event_time = 1234567890;
+    const event_occurred = false; // true;
+    const event_time = null; // BigInt(1220351);
     const result = await callBumpFunction(event_occurred, event_time);
     console.log("Result:", result);
   } catch (error) {
