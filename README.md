@@ -1,1 +1,6 @@
-# sentinel-scripts
+# Sentinel Scripts
+
+```
+npm i
+node index.js
+```
